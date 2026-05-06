@@ -1,7 +1,7 @@
 import os
 import feedparser
+import requests
 import smtplib
-import google.generativeai as genai
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -12,20 +12,13 @@ from email.mime.multipart import MIMEMultipart
 
 GMAIL = os.environ["GMAIL"]
 APP_PASSWORD = os.environ["APP_PASSWORD"]
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
 RSS_FEEDS = [
     "https://hnrss.org/frontpage",
-    "https://openai.com/news/rss.xml"
+    "https://openai.com/news/rss.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"
 ]
-
-# ======================
-# GEMINI SETUP
-# ======================
-
-genai.configure(api_key=GEMINI_API_KEY)
-
-model = genai.GenerativeModel("gemini-2.0-flash")
 
 # ======================
 # FETCH NEWS
@@ -50,13 +43,17 @@ def fetch_news():
     return articles[:5]
 
 # ======================
-# SUMMARIZE
+# SUMMARIZE WITH GROQ
 # ======================
 
 def summarize(article):
 
     prompt = f"""
-    Summarize this AI news in 3 concise bullet points.
+    Summarize this AI/ML news article.
+
+    Give:
+    - 3 concise bullet points
+    - Why this matters
 
     TITLE:
     {article['title']}
@@ -65,9 +62,27 @@ def summarize(article):
     {article['summary']}
     """
 
-    response = model.generate_content(prompt)
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "temperature": 0.3
+        }
+    )
 
-    return response.text
+    result = response.json()
+
+    return result["choices"][0]["message"]["content"]
 
 # ======================
 # SEND EMAIL
@@ -103,17 +118,32 @@ def main():
 
     news = fetch_news()
 
-    html = "<h2>Daily AI News Digest</h2>"
+    html = """
+    <h2>Daily AI/ML News Digest</h2>
+    """
 
     for article in news:
 
-        summary = summarize(article)
+        try:
+
+            summary = summarize(article)
+
+        except Exception as e:
+
+            summary = f"Failed to summarize article: {str(e)}"
 
         html += f"""
         <hr>
+
         <h3>{article['title']}</h3>
+
         <p>{summary}</p>
-        <a href="{article['link']}">Read Full Article</a>
+
+        <p>
+            <a href="{article['link']}">
+                Read Full Article
+            </a>
+        </p>
         """
 
     send_email(html)
