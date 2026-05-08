@@ -1,38 +1,73 @@
 import os
+import json
 import requests
 import smtplib
 import feedparser
-import json
 
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# ======================
+# =========================================================
 # CONFIG
-# ======================
+# =========================================================
 
 GMAIL = os.environ["GMAIL"]
 APP_PASSWORD = os.environ["APP_PASSWORD"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
-MAX_GLOBAL = 3
+# =========================================================
+# OUTPUT CONFIG
+# =========================================================
+
+MAX_FRONTIER = 1
+MAX_GLOBAL = 2
 MAX_INDIA = 2
 
-# ======================
-# INDIA RSS SOURCES
-# ======================
+# =========================================================
+# FRONTIER AI LABS
+# =========================================================
+
+FRONTIER_FEEDS = [
+    "https://openai.com/news/rss.xml",
+    "https://blog.google/technology/ai/rss/",
+    "https://www.technologyreview.com/topic/artificial-intelligence/feed/"
+]
+
+# =========================================================
+# GLOBAL AI NEWS
+# =========================================================
+
+GLOBAL_RSS_FEEDS = [
+    "https://techcrunch.com/category/artificial-intelligence/feed/",
+    "https://venturebeat.com/category/ai/feed/"
+]
+
+# =========================================================
+# INDIA AI NEWS
+# =========================================================
 
 INDIA_RSS_FEEDS = [
     "https://analyticsindiamag.com/feed/",
-    "https://entrackr.com/feed/",
     "https://inc42.com/feed/",
-    "https://yourstory.com/feed"
+    "https://entrackr.com/feed/",
+    "https://yourstory.com/feed/",
+    "https://www.moneycontrol.com/rss/technology.xml"
 ]
 
-# ======================
-# AI KEYWORDS
-# ======================
+# =========================================================
+# COMMUNITY SOURCES
+# =========================================================
+
+SUBREDDITS = [
+    "MachineLearning",
+    "LocalLLaMA",
+    "artificial"
+]
+
+# =========================================================
+# FILTERING
+# =========================================================
 
 AI_KEYWORDS = [
     "ai",
@@ -46,32 +81,55 @@ AI_KEYWORDS = [
     "gemini",
     "deepseek",
     "mistral",
-    "rag",
+    "copilot",
     "agent",
     "agents",
-    "copilot",
-    "vector database",
-    "inference",
-    "fine tuning",
+    "rag",
     "automation",
-    "genai",
-    "startup"
+    "nvidia",
+    "startup",
+    "funding",
+    "inference",
+    "reasoning"
+]
+
+FRONTIER_AI_KEYWORDS = [
+    "openai",
+    "chatgpt",
+    "gpt",
+    "anthropic",
+    "claude",
+    "gemini",
+    "deepmind",
+    "meta ai",
+    "llama",
+    "xai",
+    "grok",
+    "deepseek",
+    "mistral"
 ]
 
 BLOCKED_KEYWORDS = [
     "daily roundup",
     "weekly roundup",
-    "morning briefing",
     "podcast",
-    "event",
     "webinar",
-    "top stories",
-    "live updates"
+    "event",
+    "live updates",
+    "morning briefing",
+    "top stories"
 ]
 
-# ======================
+BAD_SUMMARY_PHRASES = [
+    "does not contain",
+    "likely includes",
+    "may include",
+    "unfortunately"
+]
+
+# =========================================================
 # HELPERS
-# ======================
+# =========================================================
 
 def contains_ai_keywords(text):
 
@@ -80,6 +138,15 @@ def contains_ai_keywords(text):
     return any(
         keyword in text
         for keyword in AI_KEYWORDS
+    )
+
+def is_frontier_ai_news(text):
+
+    text = text.lower()
+
+    return any(
+        keyword in text
+        for keyword in FRONTIER_AI_KEYWORDS
     )
 
 def is_low_quality(text):
@@ -110,70 +177,73 @@ def deduplicate_articles(articles):
 
     return unique
 
-# ======================
-# HACKER NEWS
-# ======================
+# =========================================================
+# RSS FETCHER
+# =========================================================
 
-def fetch_hackernews():
+def fetch_rss_articles(
+    feeds,
+    region,
+    category
+):
 
     articles = []
 
-    try:
+    for url in feeds:
 
-        top_ids = requests.get(
-            "https://hacker-news.firebaseio.com/v0/topstories.json",
-            timeout=20
-        ).json()[:40]
+        try:
 
-        for story_id in top_ids:
+            feed = feedparser.parse(url)
 
-            item = requests.get(
-                f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
-                timeout=20
-            ).json()
+            source_name = feed.feed.get(
+                "title",
+                "RSS Feed"
+            )
 
-            if not item:
-                continue
+            for entry in feed.entries[:10]:
 
-            title = item.get("title", "")
+                title = entry.get("title", "")
 
-            if not contains_ai_keywords(title):
-                continue
+                summary = entry.get(
+                    "summary",
+                    ""
+                )
 
-            if is_low_quality(title):
-                continue
+                combined = (
+                    f"{title} {summary}"
+                )
 
-            articles.append({
-                "title": title,
-                "summary": item.get("text", ""),
-                "link": item.get(
-                    "url",
-                    "https://news.ycombinator.com"
-                ),
-                "source": "Hacker News",
-                "region": "global"
-            })
+                if not contains_ai_keywords(combined):
+                    continue
 
-    except Exception as e:
+                if is_low_quality(combined):
+                    continue
 
-        print(f"HackerNews error: {e}")
+                articles.append({
+                    "title": title,
+                    "summary": summary,
+                    "link": entry.get("link", ""),
+                    "source": source_name,
+                    "region": region,
+                    "category": category
+                })
+
+        except Exception as e:
+
+            print(
+                f"RSS fetch failed "
+                f"for {url}: {e}"
+            )
 
     return articles
 
-# ======================
+# =========================================================
 # REDDIT
-# ======================
+# =========================================================
 
 def fetch_reddit():
 
     articles = []
-
-    subreddits = [
-        "MachineLearning",
-        "LocalLLaMA",
-        "artificial",
-        "singularity"
-    ]
 
     headers = {
         "User-Agent": "Mozilla/5.0"
@@ -181,11 +251,11 @@ def fetch_reddit():
 
     try:
 
-        for subreddit in subreddits:
+        for subreddit in SUBREDDITS:
 
             url = (
                 f"https://www.reddit.com/r/"
-                f"{subreddit}/hot.json?limit=10"
+                f"{subreddit}/hot.json?limit=5"
             )
 
             response = requests.get(
@@ -194,13 +264,18 @@ def fetch_reddit():
                 timeout=20
             )
 
-            posts = response.json()["data"]["children"]
+            posts = response.json()[
+                "data"
+            ]["children"]
 
             for post in posts:
 
                 data = post["data"]
 
-                title = data.get("title", "")
+                title = data.get(
+                    "title",
+                    ""
+                )
 
                 if not contains_ai_keywords(title):
                     continue
@@ -208,18 +283,30 @@ def fetch_reddit():
                 if is_low_quality(title):
                     continue
 
+                score = data.get(
+                    "score",
+                    0
+                )
+
+                # only highly trending posts
+                if score < 250:
+                    continue
+
                 articles.append({
                     "title": title,
                     "summary": data.get(
                         "selftext",
                         ""
-                    )[:1000],
+                    )[:1200],
                     "link": (
                         "https://reddit.com" +
                         data.get("permalink", "")
                     ),
-                    "source": f"Reddit - r/{subreddit}",
-                    "region": "global"
+                    "source": (
+                        f"Reddit - r/{subreddit}"
+                    ),
+                    "region": "global",
+                    "category": "community"
                 })
 
     except Exception as e:
@@ -228,9 +315,9 @@ def fetch_reddit():
 
     return articles
 
-# ======================
+# =========================================================
 # GITHUB
-# ======================
+# =========================================================
 
 def fetch_github():
 
@@ -245,13 +332,13 @@ def fetch_github():
 
         params = {
             "q": (
-                "llm OR rag OR agents OR "
-                "openai OR anthropic OR "
-                "inference OR vector-db"
+                "llm OR openai OR "
+                "agents OR rag OR "
+                "anthropic"
             ),
             "sort": "stars",
             "order": "desc",
-            "per_page": 10
+            "per_page": 5
         }
 
         response = requests.get(
@@ -260,23 +347,44 @@ def fetch_github():
             timeout=20
         )
 
-        repos = response.json().get("items", [])
+        repos = response.json().get(
+            "items",
+            []
+        )
 
         for repo in repos:
 
-            title = repo.get("full_name", "")
+            stars = repo.get(
+                "stargazers_count",
+                0
+            )
 
-            desc = repo.get("description", "")
-
-            if is_low_quality(title):
+            if stars < 5000:
                 continue
 
+            title = repo.get(
+                "full_name",
+                ""
+            )
+
+            desc = repo.get(
+                "description",
+                ""
+            )
+
             articles.append({
-                "title": f"Trending GitHub Repo: {title}",
+                "title": (
+                    f"Trending AI Repo: "
+                    f"{title}"
+                ),
                 "summary": desc,
-                "link": repo.get("html_url", ""),
-                "source": f"GitHub - {title}",
-                "region": "global"
+                "link": repo.get(
+                    "html_url",
+                    ""
+                ),
+                "source": "GitHub",
+                "region": "global",
+                "category": "community"
             })
 
     except Exception as e:
@@ -285,81 +393,44 @@ def fetch_github():
 
     return articles
 
-# ======================
-# INDIA RSS
-# ======================
-
-def fetch_india_news():
-
-    articles = []
-
-    try:
-
-        for url in INDIA_RSS_FEEDS:
-
-            feed = feedparser.parse(url)
-
-            for entry in feed.entries[:10]:
-
-                title = entry.get("title", "")
-
-                summary = entry.get("summary", "")
-
-                combined = f"{title} {summary}"
-
-                if not contains_ai_keywords(combined):
-                    continue
-
-                if is_low_quality(combined):
-                    continue
-
-                articles.append({
-                    "title": title,
-                    "summary": summary,
-                    "link": entry.get("link", ""),
-                    "source": feed.feed.get(
-                        "title",
-                        "India RSS"
-                    ),
-                    "region": "india"
-                })
-
-    except Exception as e:
-
-        print(f"India RSS error: {e}")
-
-    return articles
-
-# ======================
-# GROQ SCORING + SUMMARY
-# ======================
+# =========================================================
+# ARTICLE SCORING
+# =========================================================
 
 def score_article(article):
 
     prompt = f"""
 You are an elite AI news editor.
 
-Evaluate this article.
+Your job is to identify IMPORTANT AI NEWS,
+not niche technical blogs.
+
+Evaluate this article on:
+
+1. News importance
+2. Industry impact
+3. Mainstream relevance
+4. Enterprise/business impact
+5. AI relevance
+6. Virality/popularity
 
 Return ONLY valid JSON.
 
 Format:
 
 {{
-    "importance": 1-10,
-    "ai_relevance": 1-10,
-    "india_relevance": 1-10,
-    "score": total score out of 30,
-    "summary": "HTML formatted summary"
+    "score": number,
+    "summary": "<html formatted summary>"
 }}
 
-Rules for summary:
-- Use proper HTML
-- DO NOT use markdown
-- Use <ul>, <li>, <b>, <p>
+Summary Rules:
+- Use HTML only
+- NO markdown
+- Use <ul>, <li>, <p>, <b>
 - Keep concise
-- No generic filler
-- Mention why this matters
+- Focus on why people should care
+- Mention business or technical impact
+- Avoid generic filler
 
 TITLE:
 {article['title']}
@@ -400,14 +471,17 @@ CONTENT:
             ["message"]["content"]
         )
 
-        # Remove markdown code blocks if present
-        content = content.replace(
-            "```json",
-            ""
-        ).replace(
-            "```",
-            ""
-        ).strip()
+        content = (
+            content.replace(
+                "```json",
+                ""
+            )
+            .replace(
+                "```",
+                ""
+            )
+            .strip()
+        )
 
         parsed = json.loads(content)
 
@@ -416,9 +490,22 @@ CONTENT:
             0
         )
 
+        # frontier AI boost
+        if is_frontier_ai_news(
+            article["title"]
+        ):
+            article["score"] += 10
+
+        # trusted news source boost
+        if article["category"] == "frontier":
+            article["score"] += 8
+
+        if article["category"] == "global_news":
+            article["score"] += 5
+
         article["summary"] = parsed.get(
             "summary",
-            "<p>No summary available</p>"
+            "<p>No summary available.</p>"
         )
 
         return article
@@ -426,8 +513,8 @@ CONTENT:
     except Exception as e:
 
         print(
-            f"Scoring failed for "
-            f"{article['title']}: {e}"
+            f"Scoring failed "
+            f"for {article['title']}: {e}"
         )
 
         article["score"] = 0
@@ -438,24 +525,32 @@ CONTENT:
 
         return article
 
-# ======================
+# =========================================================
 # EMAIL
-# ======================
+# =========================================================
 
 def send_email(html):
 
     msg = MIMEMultipart("alternative")
 
-    today = datetime.now().strftime("%d %b %Y")
-
-    msg["Subject"] = (
-        f"Daily AI Intelligence Digest - {today}"
+    today = datetime.now().strftime(
+        "%d %b %Y"
     )
 
-    msg["From"] = GMAIL
+    msg["Subject"] = (
+        f"Daily AI Intelligence Digest "
+        f"- {today}"
+    )
+
+    msg["From"] = (
+        f"Daily AI News <{GMAIL}>"
+    )
+
     msg["To"] = GMAIL
 
-    msg.attach(MIMEText(html, "html"))
+    msg.attach(
+        MIMEText(html, "html")
+    )
 
     with smtplib.SMTP(
         "smtp.gmail.com",
@@ -475,11 +570,65 @@ def send_email(html):
             msg.as_string()
         )
 
-# ======================
+# =========================================================
 # BUILD HTML
-# ======================
+# =========================================================
 
-def build_html(global_news, india_news):
+def build_section(title, articles):
+
+    html = f"""
+    <h2>{title}</h2>
+    """
+
+    for article in articles:
+
+        html += f"""
+        <div style="
+            border:1px solid #ddd;
+            border-radius:12px;
+            padding:22px;
+            margin-bottom:25px;
+            background:#fafafa;
+        ">
+
+        <h3 style="margin-top:0;">
+            {article['title']}
+        </h3>
+
+        <p>
+            <strong>Source:</strong>
+            {article['source']}
+        </p>
+
+        {article['summary']}
+
+        <p>
+            <a
+                href="{article['link']}"
+                style="
+                    background:#111;
+                    color:white;
+                    padding:10px 14px;
+                    border-radius:6px;
+                    text-decoration:none;
+                    display:inline-block;
+                    margin-top:10px;
+                "
+            >
+                Read More
+            </a>
+        </p>
+
+        </div>
+        """
+
+    return html
+
+def build_html(
+    frontier_news,
+    global_news,
+    india_news
+):
 
     html = """
     <html>
@@ -488,112 +637,43 @@ def build_html(global_news, india_news):
         font-family: Arial, sans-serif;
         max-width: 900px;
         margin: auto;
+        padding: 20px;
         line-height: 1.6;
         color: #222;
-        padding: 20px;
     ">
 
-    <h1>🧠 Daily AI Intelligence Digest</h1>
+    <h1>
+        🧠 Daily AI Intelligence Digest
+    </h1>
 
     <p>
-    Curated AI updates from Hacker News,
-    Reddit, GitHub, and Indian startup ecosystem.
+    Major AI model developments,
+    startup ecosystem updates,
+    enterprise AI moves,
+    and high-signal AI trends.
     </p>
 
     <hr>
-
-    <h2>🌍 Global AI Highlights</h2>
     """
 
-    for article in global_news:
+    html += build_section(
+        "🚀 Frontier AI Labs",
+        frontier_news
+    )
 
-        html += f"""
-        <div style="
-            border:1px solid #ddd;
-            border-radius:10px;
-            padding:20px;
-            margin-bottom:25px;
-            background:#fafafa;
-        ">
+    html += "<hr>"
 
-        <h3 style="margin-top:0;">
-            {article['title']}
-        </h3>
+    html += build_section(
+        "🌍 Global AI Highlights",
+        global_news
+    )
 
-        <p>
-            <strong>Source:</strong>
-            {article['source']}
-        </p>
+    html += "<hr>"
 
-        {article['summary']}
-
-        <p>
-            <a
-                href="{article['link']}"
-                style="
-                    background:#111;
-                    color:white;
-                    padding:10px 14px;
-                    border-radius:6px;
-                    text-decoration:none;
-                    display:inline-block;
-                    margin-top:10px;
-                "
-            >
-                Read More
-            </a>
-        </p>
-
-        </div>
-        """
-
-    html += """
-    <hr>
-
-    <h2>🇮🇳 India AI Highlights</h2>
-    """
-
-    for article in india_news:
-
-        html += f"""
-        <div style="
-            border:1px solid #ddd;
-            border-radius:10px;
-            padding:20px;
-            margin-bottom:25px;
-            background:#fafafa;
-        ">
-
-        <h3 style="margin-top:0;">
-            {article['title']}
-        </h3>
-
-        <p>
-            <strong>Source:</strong>
-            {article['source']}
-        </p>
-
-        {article['summary']}
-
-        <p>
-            <a
-                href="{article['link']}"
-                style="
-                    background:#111;
-                    color:white;
-                    padding:10px 14px;
-                    border-radius:6px;
-                    text-decoration:none;
-                    display:inline-block;
-                    margin-top:10px;
-                "
-            >
-                Read More
-            </a>
-        </p>
-
-        </div>
-        """
+    html += build_section(
+        "🇮🇳 India AI Highlights",
+        india_news
+    )
 
     html += """
     <hr>
@@ -603,7 +683,9 @@ def build_html(global_news, india_news):
         font-size:12px;
     ">
     Generated automatically using
-    multi-source AI aggregation
+    curated AI news sources,
+    frontier AI lab updates,
+    community signals,
     and Groq summarization.
     </p>
 
@@ -613,20 +695,46 @@ def build_html(global_news, india_news):
 
     return html
 
-# ======================
+# =========================================================
 # MAIN
-# ======================
+# =========================================================
 
 def main():
 
-    print("Collecting news...")
+    print("Fetching news...")
 
     articles = []
 
-    articles.extend(fetch_hackernews())
+    # frontier AI
+    articles.extend(
+        fetch_rss_articles(
+            FRONTIER_FEEDS,
+            "global",
+            "frontier"
+        )
+    )
+
+    # major global AI news
+    articles.extend(
+        fetch_rss_articles(
+            GLOBAL_RSS_FEEDS,
+            "global",
+            "global_news"
+        )
+    )
+
+    # India AI ecosystem
+    articles.extend(
+        fetch_rss_articles(
+            INDIA_RSS_FEEDS,
+            "india",
+            "india_news"
+        )
+    )
+
+    # community sources
     articles.extend(fetch_reddit())
     articles.extend(fetch_github())
-    articles.extend(fetch_india_news())
 
     articles = deduplicate_articles(
         articles
@@ -634,7 +742,7 @@ def main():
 
     print(
         f"Collected "
-        f"{len(articles)} raw articles"
+        f"{len(articles)} articles"
     )
 
     print("Scoring articles...")
@@ -645,26 +753,31 @@ def main():
 
         scored = score_article(article)
 
-        # Skip bad summaries
-        bad_phrases = [
-            "does not contain",
-            "likely includes",
-            "may include",
-            "unfortunately"
-        ]
-
         if any(
             phrase in scored["summary"].lower()
-            for phrase in bad_phrases
+            for phrase in BAD_SUMMARY_PHRASES
         ):
             continue
 
         scored_articles.append(scored)
 
+    frontier_news = sorted(
+        [
+            a for a in scored_articles
+            if a["category"] == "frontier"
+        ],
+        key=lambda x: x["score"],
+        reverse=True
+    )[:MAX_FRONTIER]
+
     global_news = sorted(
         [
             a for a in scored_articles
-            if a["region"] == "global"
+            if (
+                a["region"] == "global"
+                and
+                a["category"] != "frontier"
+            )
         ],
         key=lambda x: x["score"],
         reverse=True
@@ -681,11 +794,13 @@ def main():
 
     print(
         f"Selected "
+        f"{len(frontier_news)} frontier + "
         f"{len(global_news)} global + "
         f"{len(india_news)} India articles"
     )
 
     html = build_html(
+        frontier_news,
         global_news,
         india_news
     )
@@ -696,9 +811,9 @@ def main():
 
     print("Email sent successfully")
 
-# ======================
+# =========================================================
 # ENTRY
-# ======================
+# =========================================================
 
 if __name__ == "__main__":
 
